@@ -1,0 +1,53 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "iil-enrichment"
+version = "0.1.0"
+description = "Enrichment Agent Pattern — bridge managed records with external knowledge sources (ADR-169)"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.12"
+authors = [
+    { name = "Achim Dehnert", email = "achim@iil.gmbh" },
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+    "Framework :: Django :: 5.0",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = []
+
+[project.optional-dependencies]
+django = ["django>=5.0"]
+gestis = ["requests>=2.31"]
+pubchem = ["requests>=2.31"]
+pgvector = ["pgvector>=0.3", "django>=5.0"]
+all = [
+    "django>=5.0",
+    "requests>=2.31",
+    "pgvector>=0.3",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.4",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["enrichment"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
