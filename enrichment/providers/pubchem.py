@@ -15,14 +15,12 @@ from __future__ import annotations
 import logging
 import re
 
-from enrichment.types import EnrichmentResult, PropertyValue
+from enrichment.types import CAS_PATTERN, EnrichmentResult, PropertyValue, ValueType
 
 logger = logging.getLogger(__name__)
 
 PUBCHEM_BASE = "https://pubchem.ncbi.nlm.nih.gov/rest"
 API_TIMEOUT = 15
-
-CAS_PATTERN = re.compile(r"^\d{1,7}-\d{2}-\d$")
 
 
 class PubChemProvider:
@@ -36,9 +34,20 @@ class PubChemProvider:
     def supported_domains(self) -> list[str]:
         return ["substance", "sds"]
 
+    _CONFIDENCE_DENOMINATOR = 10
+
     def __init__(self, timeout: int = API_TIMEOUT) -> None:
         self._timeout = timeout
         self._session = None
+
+    def __repr__(self) -> str:
+        return f"PubChemProvider(timeout={self._timeout})"
+
+    def close(self) -> None:
+        """Close the underlying HTTP session."""
+        if self._session is not None:
+            self._session.close()
+            self._session = None
 
     def _get_session(self):
         if self._session is None:
@@ -72,12 +81,7 @@ class PubChemProvider:
     def _resolve_cid(self, query: str) -> int | None:
         """Resolve CAS or name to PubChem CID."""
         session = self._get_session()
-        is_cas = bool(CAS_PATTERN.match(query))
-
-        if is_cas:
-            url = f"{PUBCHEM_BASE}/pug/compound/name/{query}/cids/JSON"
-        else:
-            url = f"{PUBCHEM_BASE}/pug/compound/name/{query}/cids/JSON"
+        url = f"{PUBCHEM_BASE}/pug/compound/name/{query}/cids/JSON"
 
         try:
             resp = session.get(url, timeout=self._timeout)
@@ -130,7 +134,7 @@ class PubChemProvider:
         except Exception:
             logger.exception("PubChem GHS fetch failed for CID %d", cid)
 
-        confidence = min(1.0, len(properties) / 10.0)
+        confidence = min(1.0, len(properties) / self._CONFIDENCE_DENOMINATOR)
 
         return EnrichmentResult(
             source=self.name,
@@ -186,24 +190,24 @@ class PubChemProvider:
                             for s in strings:
                                 for m in re.finditer(r"GHS\d{2}", s.get("String", "")):
                                     pictograms.add(m.group())
-                            for markup in s.get("Markup", []):
-                                extra = markup.get("Extra", "")
-                                for m in re.finditer(r"GHS\d{2}", extra):
-                                    pictograms.add(m.group())
+                                for markup in s.get("Markup", []):
+                                    extra = markup.get("Extra", "")
+                                    for m in re.finditer(r"GHS\d{2}", extra):
+                                        pictograms.add(m.group())
         except Exception:
             logger.exception("GHS parsing failed")
 
         if h_codes:
             properties["h_statements"] = PropertyValue(
-                value=sorted(h_codes), section="2.1", value_type="text"
+                value=sorted(h_codes), section="2.1", value_type=ValueType.LIST
             )
         if p_codes:
             properties["p_statements"] = PropertyValue(
-                value=sorted(p_codes), section="2.2", value_type="text"
+                value=sorted(p_codes), section="2.2", value_type=ValueType.LIST
             )
         if pictograms:
             properties["pictograms"] = PropertyValue(
-                value=sorted(pictograms), section="2.2", value_type="text"
+                value=sorted(pictograms), section="2.2", value_type=ValueType.LIST
             )
         if signal_word:
             properties["signal_word"] = PropertyValue(

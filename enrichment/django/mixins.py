@@ -65,58 +65,61 @@ class EnrichableModelMixin(models.Model):
             f"{self.__class__.__name__} must implement get_enrichment_domain()"
         )
 
+    def apply_enrichment(self, result: EnrichmentResult) -> None:
+        """Apply an EnrichmentResult to the model fields (no save).
+
+        Call this to set enrichment fields without persisting.
+        Useful for batch processing or when you need to save manually.
+        """
+        from django.utils import timezone
+
+        if result.is_empty:
+            return
+
+        serialized = result.to_dict()
+
+        existing = self.enrichment_data or {}
+        existing.update(serialized)
+        self.enrichment_data = existing
+
+        sources = self.enrichment_sources or []
+        for src in result.source_list:
+            if src not in sources:
+                sources.append(src)
+        self.enrichment_sources = sources
+
+        self.last_enriched_at = timezone.now()
+        self.enrichment_confidence = result.confidence
+
     def run_enrichment(self, registry=None, save: bool = True) -> EnrichmentResult:
-        """Execute enrichment and store results.
+        """Execute enrichment, apply results, optionally save.
 
         Args:
             registry: EnrichmentRegistry to use (default: default_registry).
             save: Whether to save the model after enrichment.
+                  Uses ``update_fields`` for efficiency if the instance
+                  already has a primary key; falls back to full save otherwise.
 
         Returns:
             Merged EnrichmentResult.
         """
-        from django.utils import timezone
-
         reg = registry or default_registry
         domain = self.get_enrichment_domain()
         key = self.get_natural_key_for_enrichment()
 
         result = reg.enrich_merged(domain, key)
+        self.apply_enrichment(result)
 
-        if not result.is_empty:
-            # Serialize PropertyValues to JSON-safe dict
-            serialized = {}
-            for prop_key, prop_val in result.properties.items():
-                serialized[prop_key] = {
-                    "value": prop_val.value,
-                    "unit": prop_val.unit,
-                    "section": prop_val.section,
-                    "value_type": prop_val.value_type,
-                    "note": prop_val.note,
-                }
-
-            # Merge with existing data (new data wins)
-            existing = self.enrichment_data or {}
-            existing.update(serialized)
-            self.enrichment_data = existing
-
-            # Track sources
-            sources = self.enrichment_sources or []
-            if result.source not in sources:
-                sources.append(result.source)
-            self.enrichment_sources = sources
-
-            self.last_enriched_at = timezone.now()
-            self.enrichment_confidence = result.confidence
-
-            if save:
-                self.save(
-                    update_fields=[
-                        "enrichment_data",
-                        "enrichment_sources",
-                        "last_enriched_at",
-                        "enrichment_confidence",
-                    ]
-                )
+        if save and not result.is_empty:
+            enrichment_fields = [
+                "enrichment_data",
+                "enrichment_sources",
+                "last_enriched_at",
+                "enrichment_confidence",
+            ]
+            if self.pk:
+                self.save(update_fields=enrichment_fields)
+            else:
+                self.save()
 
         return result

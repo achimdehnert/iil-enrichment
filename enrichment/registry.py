@@ -1,6 +1,10 @@
 """EnrichmentRegistry — central dispatch for enrichment providers.
 
 No Django dependency. Pure Python.
+
+Thread-safety note: The registry itself is NOT thread-safe. In multi-threaded
+environments (Django, Celery), register providers at module import time or
+in Django AppConfig.ready() — never concurrently at runtime.
 """
 
 from __future__ import annotations
@@ -24,7 +28,7 @@ class EnrichmentRegistry:
         registry.register("substance", PubChemProvider())
 
         results = registry.enrich("substance", "67-64-1")
-        # → [EnrichmentResult(source="GESTIS", ...), EnrichmentResult(source="PubChem", ...)]
+        # → [EnrichmentResult(source="GESTIS", ...), ...]
 
         merged = registry.enrich_merged("substance", "67-64-1")
         # → single EnrichmentResult with all properties merged
@@ -32,6 +36,10 @@ class EnrichmentRegistry:
 
     def __init__(self) -> None:
         self._providers: dict[str, list[EnrichmentProvider]] = defaultdict(list)
+
+    def __repr__(self) -> str:
+        counts = {d: len(p) for d, p in self._providers.items() if p}
+        return f"EnrichmentRegistry(domains={counts})"
 
     def register(self, domain: str, provider: EnrichmentProvider) -> None:
         """Register a provider for a domain."""
@@ -49,6 +57,10 @@ class EnrichmentRegistry:
         ]
         return len(self._providers[domain]) < before
 
+    def reset(self) -> None:
+        """Remove all providers. Useful for test isolation."""
+        self._providers.clear()
+
     def get_providers(self, domain: str) -> list[EnrichmentProvider]:
         """List all providers for a domain."""
         return list(self._providers[domain])
@@ -56,7 +68,7 @@ class EnrichmentRegistry:
     @property
     def domains(self) -> list[str]:
         """List all registered domains."""
-        return [d for d, providers in self._providers.items() if providers]
+        return sorted(d for d, providers in self._providers.items() if providers)
 
     def enrich(self, domain: str, natural_key: str) -> list[EnrichmentResult]:
         """Run all providers for domain, return individual results.
@@ -64,7 +76,12 @@ class EnrichmentRegistry:
         Errors in individual providers are logged but don't stop others.
         """
         results: list[EnrichmentResult] = []
-        for provider in self._providers.get(domain, []):
+        providers = self._providers.get(domain, [])
+        if not providers:
+            logger.debug("No providers registered for domain=%s", domain)
+            return results
+
+        for provider in providers:
             if not provider.can_enrich(domain, natural_key):
                 logger.debug(
                     "Provider %s cannot enrich domain=%s key=%s",
@@ -113,5 +130,6 @@ class EnrichmentRegistry:
         return merged
 
 
-# Singleton registry — import and use directly
+# Singleton registry — import and use directly.
+# Register providers at import time or in Django AppConfig.ready().
 default_registry = EnrichmentRegistry()

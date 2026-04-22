@@ -128,3 +128,26 @@ class TestRegistry:
 
         results = reg.enrich("substance", "")
         assert len(results) == 0
+
+    def test_should_reset_all_providers(self):
+        reg = EnrichmentRegistry()
+        reg.register("substance", FakeProvider("A", ["substance"]))
+        reg.register("trade", FakeProvider("B", ["trade"]))
+        assert len(reg.domains) == 2
+
+        reg.reset()
+        assert reg.domains == []
+        assert reg.get_providers("substance") == []
+
+    def test_should_have_repr(self):
+        reg = EnrichmentRegistry()
+        reg.register("substance", FakeProvider("A", ["substance"]))
+        reg.register("substance", FakeProvider("B", ["substance"]))
+        assert "substance" in repr(reg)
+        assert "2" in repr(reg)
+
+    def test_should_sort_domains(self):
+        reg = EnrichmentRegistry()
+        reg.register("trade", FakeProvider("C", ["trade"]))
+        reg.register("substance", FakeProvider("A", ["substance"]))
+        assert reg.domains == ["substance", "trade"]

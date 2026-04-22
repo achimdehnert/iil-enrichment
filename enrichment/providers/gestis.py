@@ -18,15 +18,38 @@ import html
 import logging
 import re
 
-from enrichment.types import EnrichmentResult, PropertyValue
+from enrichment.types import CAS_PATTERN, EnrichmentResult, PropertyValue, ValueType
 
 logger = logging.getLogger(__name__)
 
 GESTIS_API = "https://gestis-api.dguv.de/api"
-GESTIS_KEY = "dddiiasjhduuvnnasdkkwUUSHhjaPPKMasd"
+GESTIS_DEFAULT_KEY = "dddiiasjhduuvnnasdkkwUUSHhjaPPKMasd"
 API_TIMEOUT = 15
 
-CAS_PATTERN = re.compile(r"^\d{1,7}-\d{2}-\d$")
+# Mapping: GESTIS sub-chapter ID → (property_key, SDS section, value_type)
+_CHAPTER_MAP: dict[str, tuple[str, str, str]] = {
+    "0600": ("physical_state", "9", "text"),
+    "0601": ("chemical_characterization", "9", "text"),
+    "0700": ("agw", "8.1", "text"),
+    "0701": ("bgw", "8.1", "text"),
+    "0900": ("first_aid", "4", "text"),
+    "1000": ("protective_measures", "8.2", "text"),
+    "1100": ("storage", "7.2", "text"),
+    "1200": ("fire_protection", "5", "text"),
+    "1300": ("disposal", "13", "text"),
+    "1301": ("spill_response", "6", "text"),
+    "1400": ("transport", "14", "text"),
+    "1500": ("wgk", "15", "text"),
+    "1501": ("stoerfallv", "15", "text"),
+}
+
+# Sub-chapter → property key for temperature-based physical data
+_PHYSICAL_TEMP_PROPS: dict[str, str] = {
+    "0602": "melting_point_c",
+    "0603": "boiling_point_c",
+    "0604": "flash_point_c",
+    "0605": "ignition_temperature_c",
+}
 
 
 def _strip_html(text: str) -> str:
@@ -50,9 +73,21 @@ class GESTISProvider:
     def supported_domains(self) -> list[str]:
         return ["substance", "sds"]
 
-    def __init__(self, timeout: int = API_TIMEOUT) -> None:
+    _CONFIDENCE_DENOMINATOR = 20
+
+    def __init__(self, timeout: int = API_TIMEOUT, api_key: str = GESTIS_DEFAULT_KEY) -> None:
         self._timeout = timeout
+        self._api_key = api_key
         self._session = None
+
+    def __repr__(self) -> str:
+        return f"GESTISProvider(timeout={self._timeout})"
+
+    def close(self) -> None:
+        """Close the underlying HTTP session."""
+        if self._session is not None:
+            self._session.close()
+            self._session = None
 
     def _get_session(self):
         if self._session is None:
@@ -91,12 +126,12 @@ class GESTISProvider:
         field = "cas_nr" if is_cas else "stoffname"
 
         url = f"{GESTIS_API}/search"
-        params = {"exact": "true", field: query, "api_key": GESTIS_KEY}
+        params = {"exact": "true", field: query, "api_key": self._api_key}
         resp = session.get(url, params=params, timeout=self._timeout)
 
         if resp.status_code != 200:
             if not is_cas:
-                params = {"exact": "false", field: query, "api_key": GESTIS_KEY}
+                params = {"exact": "false", field: query, "api_key": self._api_key}
                 resp = session.get(url, params=params, timeout=self._timeout)
             if resp.status_code != 200:
                 return None
@@ -111,7 +146,7 @@ class GESTISProvider:
         """Fetch full GESTIS article by ZVG number."""
         session = self._get_session()
         url = f"{GESTIS_API}/article/de/{zvg}"
-        resp = session.get(url, params={"api_key": GESTIS_KEY}, timeout=self._timeout)
+        resp = session.get(url, params={"api_key": self._api_key}, timeout=self._timeout)
 
         if resp.status_code != 200:
             return EnrichmentResult(source=self.name, confidence=0.0, natural_key=natural_key)
@@ -126,10 +161,10 @@ class GESTISProvider:
 
         gestis_url = f"https://gestis.dguv.de/data?name={zvg}"
 
-        properties["gestis_zvg"] = PropertyValue(value=zvg, value_type="text")
-        properties["gestis_url"] = PropertyValue(value=gestis_url, value_type="text")
+        properties["gestis_zvg"] = PropertyValue(value=zvg, value_type=ValueType.TEXT)
+        properties["gestis_url"] = PropertyValue(value=gestis_url, value_type=ValueType.TEXT)
 
-        confidence = min(1.0, len(properties) / 20.0)
+        confidence = min(1.0, len(properties) / self._CONFIDENCE_DENOMINATOR)
 
         return EnrichmentResult(
             source=self.name,
@@ -148,7 +183,6 @@ class GESTISProvider:
         """Extract structured data from GESTIS chapters."""
         s = _strip_html
 
-        # Chapter mapping: GESTIS chapter ID → extraction logic
         for chap_id, chapter in chapters.items():
             chap_text = s(chapter.get("text", ""))
             if chap_text:
@@ -164,64 +198,10 @@ class GESTISProvider:
 
                 raw_sections[f"gestis_{sub_id}"] = sub_text
 
-                # Physical properties
-                if sub_id == "0600":
-                    properties["physical_state"] = PropertyValue(
-                        value=sub_text, section="9", value_type="text"
-                    )
-                if sub_id == "0601":
-                    properties["chemical_characterization"] = PropertyValue(
-                        value=sub_text, section="9", value_type="text"
-                    )
-
-                # Occupational exposure limits (AGW)
-                if sub_id == "0700":
-                    properties["agw"] = PropertyValue(
-                        value=sub_text, section="8.1", value_type="text"
-                    )
-                if sub_id == "0701":
-                    properties["bgw"] = PropertyValue(
-                        value=sub_text, section="8.1", value_type="text"
-                    )
-
-                # Safety measures
-                if sub_id == "0900":
-                    properties["first_aid"] = PropertyValue(
-                        value=sub_text, section="4", value_type="text"
-                    )
-                if sub_id == "1000":
-                    properties["protective_measures"] = PropertyValue(
-                        value=sub_text, section="8.2", value_type="text"
-                    )
-                if sub_id == "1100":
-                    properties["storage"] = PropertyValue(
-                        value=sub_text, section="7.2", value_type="text"
-                    )
-                if sub_id == "1200":
-                    properties["fire_protection"] = PropertyValue(
-                        value=sub_text, section="5", value_type="text"
-                    )
-                if sub_id == "1300":
-                    properties["disposal"] = PropertyValue(
-                        value=sub_text, section="13", value_type="text"
-                    )
-                if sub_id == "1301":
-                    properties["spill_response"] = PropertyValue(
-                        value=sub_text, section="6", value_type="text"
-                    )
-                if sub_id == "1400":
-                    properties["transport"] = PropertyValue(
-                        value=sub_text, section="14", value_type="text"
-                    )
-
-                # Regulations
-                if sub_id == "1500":
-                    properties["wgk"] = PropertyValue(
-                        value=sub_text, section="15", value_type="text"
-                    )
-                if sub_id == "1501":
-                    properties["stoerfallv"] = PropertyValue(
-                        value=sub_text, section="15", value_type="text"
+                if sub_id in _CHAPTER_MAP:
+                    prop_key, section, vtype = _CHAPTER_MAP[sub_id]
+                    properties[prop_key] = PropertyValue(
+                        value=sub_text, section=section, value_type=vtype
                     )
 
         # Parse physical data from sub-chapters 06xx
@@ -242,25 +222,10 @@ class GESTISProvider:
 
                 temp_match = re.search(r"(-?\d+(?:[.,]\d+)?)\s*°?\s*C", text)
 
-                if sub_id == "0602" and temp_match:
+                if sub_id in _PHYSICAL_TEMP_PROPS and temp_match:
                     val = float(temp_match.group(1).replace(",", "."))
-                    properties["melting_point_c"] = PropertyValue(
-                        value=val, unit="°C", section="9.1", value_type="numeric"
-                    )
-                if sub_id == "0603" and temp_match:
-                    val = float(temp_match.group(1).replace(",", "."))
-                    properties["boiling_point_c"] = PropertyValue(
-                        value=val, unit="°C", section="9.1", value_type="numeric"
-                    )
-                if sub_id == "0604" and temp_match:
-                    val = float(temp_match.group(1).replace(",", "."))
-                    properties["flash_point_c"] = PropertyValue(
-                        value=val, unit="°C", section="9.1", value_type="numeric"
-                    )
-                if sub_id == "0605" and temp_match:
-                    val = float(temp_match.group(1).replace(",", "."))
-                    properties["ignition_temperature_c"] = PropertyValue(
-                        value=val, unit="°C", section="9.1", value_type="numeric"
+                    properties[_PHYSICAL_TEMP_PROPS[sub_id]] = PropertyValue(
+                        value=val, unit="°C", section="9.1", value_type=ValueType.NUMERIC
                     )
 
                 density_match = re.search(
@@ -269,5 +234,5 @@ class GESTISProvider:
                 if sub_id == "0608" and density_match:
                     val = float(density_match.group(1).replace(",", "."))
                     properties["density"] = PropertyValue(
-                        value=val, unit="g/cm³", section="9.1", value_type="numeric"
+                        value=val, unit="g/cm³", section="9.1", value_type=ValueType.NUMERIC
                     )
