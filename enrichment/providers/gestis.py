@@ -26,21 +26,25 @@ GESTIS_API = "https://gestis-api.dguv.de/api"
 GESTIS_DEFAULT_KEY = "dddiiasjhduuvnnasdkkwUUSHhjaPPKMasd"
 API_TIMEOUT = 15
 
+# CMR H-codes for is_cmr detection
+_CMR_CODES = frozenset({"H340", "H341", "H350", "H351", "H360", "H361", "H362"})
+
 # Mapping: GESTIS sub-chapter ID → (property_key, SDS section, value_type)
 _CHAPTER_MAP: dict[str, tuple[str, str, str]] = {
-    "0600": ("physical_state", "9", "text"),
-    "0601": ("chemical_characterization", "9", "text"),
+    "0303": ("physical_state", "9", "text"),
+    "0304": ("properties", "9", "text"),
+    "0305": ("chemical_characterization", "9", "text"),
     "0700": ("agw", "8.1", "text"),
     "0701": ("bgw", "8.1", "text"),
     "0900": ("first_aid", "4", "text"),
     "1000": ("protective_measures", "8.2", "text"),
     "1100": ("storage", "7.2", "text"),
+    "1108": ("transport", "14", "text"),
+    "1106": ("wgk", "15", "text"),
     "1200": ("fire_protection", "5", "text"),
+    "1215": ("stoerfallv", "15", "text"),
     "1300": ("disposal", "13", "text"),
     "1301": ("spill_response", "6", "text"),
-    "1400": ("transport", "14", "text"),
-    "1500": ("wgk", "15", "text"),
-    "1501": ("stoerfallv", "15", "text"),
 }
 
 # Sub-chapter → property key for temperature-based physical data
@@ -111,16 +115,16 @@ class GESTISProvider:
         """Fetch substance data from GESTIS API."""
         key = natural_key.strip()
         try:
-            zvg = self._search(key)
-            if not zvg:
+            hit = self._search(key)
+            if not hit:
                 return EnrichmentResult(source=self.name, confidence=0.0, natural_key=key)
-            return self._fetch_article(zvg, key)
+            return self._fetch_article(hit, key)
         except Exception:
             logger.exception("GESTIS enrichment failed for key=%s", key)
             return EnrichmentResult(source=self.name, confidence=0.0, natural_key=key)
 
-    def _search(self, query: str) -> str | None:
-        """Search GESTIS, return ZVG number of best match."""
+    def _search(self, query: str) -> dict | None:
+        """Search GESTIS, return best match dict with zvg_nr, name, cas_nr."""
         session = self._get_session()
         is_cas = bool(CAS_PATTERN.match(query))
         field = "cas_nr" if is_cas else "stoffname"
@@ -140,10 +144,11 @@ class GESTISProvider:
         if not data:
             return None
 
-        return data[0].get("zvg_nr", "")
+        return data[0]
 
-    def _fetch_article(self, zvg: str, natural_key: str) -> EnrichmentResult:
-        """Fetch full GESTIS article by ZVG number."""
+    def _fetch_article(self, hit: dict, natural_key: str) -> EnrichmentResult:
+        """Fetch full GESTIS article by search hit dict."""
+        zvg = hit.get("zvg_nr", "")
         session = self._get_session()
         url = f"{GESTIS_API}/article/de/{zvg}"
         resp = session.get(url, params={"api_key": self._api_key}, timeout=self._timeout)
@@ -157,10 +162,17 @@ class GESTISProvider:
         properties: dict[str, PropertyValue] = {}
         raw_sections: dict[str, str] = {}
 
+        # Identity from search hit + article
+        if name := (article.get("name") or hit.get("name", "")):
+            properties["name"] = PropertyValue(value=name, value_type=ValueType.TEXT)
+        if cas := hit.get("cas_nr", ""):
+            properties["cas_number"] = PropertyValue(
+                value=cas, section="1", value_type=ValueType.TEXT
+            )
+
         self._parse_chapters(chapters, properties, raw_sections)
 
         gestis_url = f"https://gestis.dguv.de/data?name={zvg}"
-
         properties["gestis_zvg"] = PropertyValue(value=zvg, value_type=ValueType.TEXT)
         properties["gestis_url"] = PropertyValue(value=gestis_url, value_type=ValueType.TEXT)
 
@@ -206,6 +218,14 @@ class GESTISProvider:
 
         # Parse physical data from sub-chapters 06xx
         self._parse_physical_properties(chapters, properties)
+        # Parse GHS classification (chapter 1303)
+        self._parse_ghs_classification(chapters, properties, raw_sections)
+        # Parse identification (chapter 0100)
+        self._parse_identification(chapters, properties)
+        # Parse explosion details (0608, 0609)
+        self._parse_explosion_details(chapters, properties)
+        # Parse regulations (1208, 1209, 1210)
+        self._parse_regulations(chapters, properties)
 
     def _parse_physical_properties(
         self,
@@ -236,3 +256,137 @@ class GESTISProvider:
                     properties["density"] = PropertyValue(
                         value=val, unit="g/cm³", section="9.1", value_type=ValueType.NUMERIC
                     )
+
+    def _parse_ghs_classification(
+        self,
+        chapters: dict,
+        properties: dict[str, PropertyValue],
+        raw_sections: dict[str, str],
+    ) -> None:
+        """Extract GHS classification from GESTIS chapter 1303."""
+        s = _strip_html
+        for chapter in chapters.values():
+            for sub in chapter.get("sub_chapters", []):
+                if sub.get("number") != "1303":
+                    continue
+                txt = s(sub.get("text", ""))
+                if not txt:
+                    return
+
+                raw_sections["gestis_ghs"] = txt
+                properties["ghs_einstufung"] = PropertyValue(
+                    value=txt[:500], section="2.1", value_type=ValueType.TEXT
+                )
+
+                h_codes = set(re.findall(r"H\d{3}[a-z]?", txt))
+                if h_codes:
+                    properties["h_statements"] = PropertyValue(
+                        value=sorted(h_codes), section="2.1", value_type=ValueType.LIST
+                    )
+                    is_cmr = bool(h_codes & _CMR_CODES)
+                    properties["is_cmr"] = PropertyValue(
+                        value=is_cmr, value_type=ValueType.BOOLEAN
+                    )
+
+                if "Gefahr" in txt or "Danger" in txt:
+                    properties["signal_word"] = PropertyValue(
+                        value="danger", section="2.1", value_type=ValueType.TEXT
+                    )
+                elif "Achtung" in txt or "Warning" in txt:
+                    properties["signal_word"] = PropertyValue(
+                        value="warning", section="2.1", value_type=ValueType.TEXT
+                    )
+                return
+
+    @staticmethod
+    def _parse_identification(
+        chapters: dict,
+        properties: dict[str, PropertyValue],
+    ) -> None:
+        """Extract EC number and molecular data from GESTIS chapter 0100/0400."""
+        s = _strip_html
+        for chapter in chapters.values():
+            for sub in chapter.get("sub_chapters", []):
+                sub_id = sub.get("number", "")
+                txt = s(sub.get("text", ""))
+                if not txt:
+                    continue
+
+                if sub_id == "0100":
+                    ec_m = re.search(r"EG Nr:\s*([\d-]+)", txt)
+                    if ec_m:
+                        properties["ec_number"] = PropertyValue(
+                            value=ec_m.group(1), section="1", value_type=ValueType.TEXT
+                        )
+
+                elif sub_id == "0400":
+                    mw = re.search(r"Molare Masse:\s*([\d.,]+)", txt)
+                    if mw:
+                        properties["molecular_weight"] = PropertyValue(
+                            value=mw.group(1), unit="g/mol", section="3", value_type=ValueType.TEXT
+                        )
+                    mf = re.match(r"([A-Z][A-Za-z0-9]+)", txt)
+                    if mf:
+                        properties["molecular_formula"] = PropertyValue(
+                            value=mf.group(1), section="3", value_type=ValueType.TEXT
+                        )
+
+    @staticmethod
+    def _parse_explosion_details(
+        chapters: dict,
+        properties: dict[str, PropertyValue],
+    ) -> None:
+        """Extract explosion group, temperature class from chapter 0608/0609."""
+        s = _strip_html
+        for chapter in chapters.values():
+            for sub in chapter.get("sub_chapters", []):
+                sub_id = sub.get("number", "")
+                txt = s(sub.get("text", ""))
+                if not txt:
+                    continue
+
+                if sub_id == "0608":
+                    tc = re.search(r"Temperaturklasse:\s*(T\d)", txt)
+                    if tc:
+                        properties["temperature_class"] = PropertyValue(
+                            value=tc.group(1), section="9.1", value_type=ValueType.TEXT
+                        )
+
+                elif sub_id == "0609":
+                    properties["explosion_limits"] = PropertyValue(
+                        value=txt[:300], section="9.1", value_type=ValueType.TEXT
+                    )
+                    eg = re.search(r"Explosionsgruppe:\s*(II[ABC])", txt)
+                    if eg:
+                        properties["explosion_group"] = PropertyValue(
+                            value=eg.group(1), section="9.1", value_type=ValueType.TEXT
+                        )
+
+    @staticmethod
+    def _parse_regulations(
+        chapters: dict,
+        properties: dict[str, PropertyValue],
+    ) -> None:
+        """Extract regulations from GESTIS chapters 1208/1209/1210."""
+        s = _strip_html
+        regs: list[str] = []
+        for chapter in chapters.values():
+            for sub in chapter.get("sub_chapters", []):
+                sub_id = sub.get("number", "")
+                txt = s(sub.get("text", ""))
+                if not txt:
+                    continue
+
+                if sub_id == "1209":
+                    for trgs in re.findall(r"TRGS \d+[^.]*", txt):
+                        regs.append(trgs.strip()[:120])
+                elif sub_id == "1210":
+                    for dguv in re.findall(r"DGUV [^,.\n]+", txt):
+                        regs.append(dguv.strip()[:120])
+                elif sub_id == "1208" and "REACH" in txt:
+                    regs.append(txt[:120])
+
+        if regs:
+            properties["regulations"] = PropertyValue(
+                value=regs[:20], section="15", value_type=ValueType.LIST
+            )
