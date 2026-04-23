@@ -1,26 +1,34 @@
-"""Tests for GESTIS provider — mock HTTP, verify property extraction."""
+"""Tests for GESTIS provider — respx-mocked HTTP, verify property extraction."""
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
+import httpx
 import pytest
+import respx
 
+from enrichment.config import HTTPDefaults
 from enrichment.providers.gestis import GESTISProvider
 from enrichment.types import ValueType
 
-
-@pytest.fixture()
-def provider():
-    return GESTISProvider(timeout=5)
+GESTIS_BASE = "https://gestis-api.dguv.de"
 
 
 @pytest.fixture()
-def _mock_session(provider):
-    """Patch requests.Session so no real HTTP calls are made."""
-    session = MagicMock()
-    provider._session = session
-    return session
+def fast_defaults(tmp_path):
+    return HTTPDefaults(
+        timeout_seconds=2,
+        max_retries=1,
+        backoff_initial=0.01,
+        backoff_max=0.05,
+        cache_enabled=False,
+        cache_dir=tmp_path,
+        rate_limit_enabled=False,
+    )
+
+
+@pytest.fixture()
+def provider(fast_defaults):
+    return GESTISProvider(defaults=fast_defaults)
 
 
 SEARCH_HIT = {
@@ -115,14 +123,23 @@ class TestGESTISCanEnrich:
 
 
 class TestGESTISEnrich:
-    def test_should_extract_identity(self, provider, _mock_session):
-        """Name, CAS, EC number from search hit + article."""
-        search_resp = MagicMock(status_code=200)
-        search_resp.json.return_value = [SEARCH_HIT]
-        article_resp = MagicMock(status_code=200)
-        article_resp.json.return_value = ARTICLE_RESPONSE
-        _mock_session.get.side_effect = [search_resp, article_resp]
+    @staticmethod
+    def _setup_routes(search_response=None, article_response=None):
+        respx.get(url__regex=r".*/api/search.*").mock(
+            return_value=httpx.Response(
+                200, json=search_response if search_response is not None else [SEARCH_HIT]
+            )
+        )
+        respx.get(url__regex=r".*/api/article/de/.*").mock(
+            return_value=httpx.Response(
+                200, json=article_response if article_response is not None else ARTICLE_RESPONSE
+            )
+        )
 
+    @respx.mock
+    def test_should_extract_identity(self, provider):
+        """Name, CAS, EC number from search hit + article."""
+        self._setup_routes()
         result = provider.enrich("substance", "67-64-1")
 
         assert result.source == "GESTIS"
@@ -130,13 +147,9 @@ class TestGESTISEnrich:
         assert result.properties["cas_number"].value == "67-64-1"
         assert result.properties["ec_number"].value == "200-662-2"
 
-    def test_should_extract_physical_properties(self, provider, _mock_session):
-        search_resp = MagicMock(status_code=200)
-        search_resp.json.return_value = [SEARCH_HIT]
-        article_resp = MagicMock(status_code=200)
-        article_resp.json.return_value = ARTICLE_RESPONSE
-        _mock_session.get.side_effect = [search_resp, article_resp]
-
+    @respx.mock
+    def test_should_extract_physical_properties(self, provider):
+        self._setup_routes()
         result = provider.enrich("substance", "67-64-1")
 
         assert result.properties["melting_point_c"].value == pytest.approx(-94.7)
@@ -145,13 +158,9 @@ class TestGESTISEnrich:
         assert result.properties["ignition_temperature_c"].value == pytest.approx(465.0)
         assert result.properties["density"].value == pytest.approx(0.79)
 
-    def test_should_extract_ghs(self, provider, _mock_session):
-        search_resp = MagicMock(status_code=200)
-        search_resp.json.return_value = [SEARCH_HIT]
-        article_resp = MagicMock(status_code=200)
-        article_resp.json.return_value = ARTICLE_RESPONSE
-        _mock_session.get.side_effect = [search_resp, article_resp]
-
+    @respx.mock
+    def test_should_extract_ghs(self, provider):
+        self._setup_routes()
         result = provider.enrich("substance", "67-64-1")
 
         assert "H225" in result.properties["h_statements"].value
@@ -160,70 +169,56 @@ class TestGESTISEnrich:
         assert result.properties["is_cmr"].value is False
         assert result.properties["ghs_einstufung"].value_type == ValueType.TEXT
 
-    def test_should_extract_explosion_details(self, provider, _mock_session):
-        search_resp = MagicMock(status_code=200)
-        search_resp.json.return_value = [SEARCH_HIT]
-        article_resp = MagicMock(status_code=200)
-        article_resp.json.return_value = ARTICLE_RESPONSE
-        _mock_session.get.side_effect = [search_resp, article_resp]
-
+    @respx.mock
+    def test_should_extract_explosion_details(self, provider):
+        self._setup_routes()
         result = provider.enrich("substance", "67-64-1")
 
         assert result.properties["temperature_class"].value == "T1"
         assert result.properties["explosion_group"].value == "IIA"
         assert "explosion_limits" in result.properties
 
-    def test_should_extract_regulations(self, provider, _mock_session):
-        search_resp = MagicMock(status_code=200)
-        search_resp.json.return_value = [SEARCH_HIT]
-        article_resp = MagicMock(status_code=200)
-        article_resp.json.return_value = ARTICLE_RESPONSE
-        _mock_session.get.side_effect = [search_resp, article_resp]
-
+    @respx.mock
+    def test_should_extract_regulations(self, provider):
+        self._setup_routes()
         result = provider.enrich("substance", "67-64-1")
 
         regs = result.properties["regulations"].value
         assert any("TRGS 510" in r for r in regs)
         assert any("DGUV" in r for r in regs)
 
-    def test_should_extract_molecular_data(self, provider, _mock_session):
-        search_resp = MagicMock(status_code=200)
-        search_resp.json.return_value = [SEARCH_HIT]
-        article_resp = MagicMock(status_code=200)
-        article_resp.json.return_value = ARTICLE_RESPONSE
-        _mock_session.get.side_effect = [search_resp, article_resp]
-
+    @respx.mock
+    def test_should_extract_molecular_data(self, provider):
+        self._setup_routes()
         result = provider.enrich("substance", "67-64-1")
 
         assert result.properties["molecular_formula"].value == "C3H6O"
         assert result.properties["molecular_weight"].value == "58,08"
 
-    def test_should_handle_search_not_found(self, provider, _mock_session):
-        resp = MagicMock(status_code=200)
-        resp.json.return_value = []
-        _mock_session.get.return_value = resp
-
+    @respx.mock
+    def test_should_handle_search_not_found(self, provider):
+        respx.get(url__regex=r".*/api/search.*").mock(
+            return_value=httpx.Response(200, json=[])
+        )
         result = provider.enrich("substance", "99-99-9")
 
         assert result.is_empty
         assert result.confidence == 0.0
 
-    def test_should_handle_api_error(self, provider, _mock_session):
-        _mock_session.get.side_effect = ConnectionError("timeout")
-
+    @respx.mock
+    def test_should_handle_api_error(self, provider):
+        respx.get(url__regex=r".*/api/search.*").mock(
+            side_effect=httpx.ConnectError("connection refused")
+        )
         result = provider.enrich("substance", "67-64-1")
 
         assert result.is_empty
         assert result.confidence == 0.0
 
-    def test_should_extract_chapter_map_properties(self, provider, _mock_session):
+    @respx.mock
+    def test_should_extract_chapter_map_properties(self, provider):
         """AGW, first_aid, storage, fire_protection from chapter map."""
-        search_resp = MagicMock(status_code=200)
-        search_resp.json.return_value = [SEARCH_HIT]
-        article_resp = MagicMock(status_code=200)
-        article_resp.json.return_value = ARTICLE_RESPONSE
-        _mock_session.get.side_effect = [search_resp, article_resp]
-
+        self._setup_routes()
         result = provider.enrich("substance", "67-64-1")
 
         assert "500 ml" in result.properties["agw"].value
@@ -232,10 +227,10 @@ class TestGESTISEnrich:
         assert "lagern" in result.properties["storage"].value
         assert "CO2" in result.properties["fire_protection"].value
 
-    def test_should_detect_cmr(self, provider, _mock_session):
+    @respx.mock
+    def test_should_detect_cmr(self, provider):
         """H350 → is_cmr True."""
-        hit = {**SEARCH_HIT}
-        article = {
+        cmr_article = {
             "name": "Benzol",
             "hauptkapitel": [
                 {
@@ -247,23 +242,14 @@ class TestGESTISEnrich:
                 },
             ],
         }
-        search_resp = MagicMock(status_code=200)
-        search_resp.json.return_value = [hit]
-        article_resp = MagicMock(status_code=200)
-        article_resp.json.return_value = article
-        _mock_session.get.side_effect = [search_resp, article_resp]
-
+        self._setup_routes(article_response=cmr_article)
         result = provider.enrich("substance", "71-43-2")
 
         assert result.properties["is_cmr"].value is True
 
-    def test_should_store_gestis_url(self, provider, _mock_session):
-        search_resp = MagicMock(status_code=200)
-        search_resp.json.return_value = [SEARCH_HIT]
-        article_resp = MagicMock(status_code=200)
-        article_resp.json.return_value = ARTICLE_RESPONSE
-        _mock_session.get.side_effect = [search_resp, article_resp]
-
+    @respx.mock
+    def test_should_store_gestis_url(self, provider):
+        self._setup_routes()
         result = provider.enrich("substance", "67-64-1")
 
         assert "001140" in result.properties["gestis_url"].value

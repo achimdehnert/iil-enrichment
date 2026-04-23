@@ -1,6 +1,6 @@
 """GESTIS Provider — German DGUV substance database.
 
-Requires: requests (pip install iil-enrichment[gestis])
+Requires: httpx + tenacity (pip install iil-enrichment[gestis])
 
 Extracts:
 - Physical properties (flash point, boiling point, density, ...)
@@ -16,14 +16,21 @@ from __future__ import annotations
 
 import html
 import logging
+import os
 import re
+import warnings
 
+from enrichment._http import get_json
+from enrichment.config import HTTPDefaults
+from enrichment.providers._base import HTTPProviderBase
 from enrichment.types import CAS_PATTERN, EnrichmentResult, PropertyValue, ValueType
 
 logger = logging.getLogger(__name__)
 
 GESTIS_API = "https://gestis-api.dguv.de/api"
-GESTIS_DEFAULT_KEY = "dddiiasjhduuvnnasdkkwUUSHhjaPPKMasd"
+GESTIS_DEFAULT_KEY = os.environ.get(
+    "GESTIS_API_KEY", "dddiiasjhduuvnnasdkkwUUSHhjaPPKMasd"
+)
 API_TIMEOUT = 15
 
 # CMR H-codes for is_cmr detection
@@ -67,8 +74,29 @@ def _strip_html(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-class GESTISProvider:
+class GESTISProvider(HTTPProviderBase):
     """Enrichment provider for GESTIS (DGUV) substance data."""
+
+    _CONFIDENCE_DENOMINATOR = 20
+
+    def __init__(
+        self,
+        timeout: int | None = None,
+        api_key: str | None = None,
+        *,
+        defaults: HTTPDefaults | None = None,
+    ) -> None:
+        if timeout is not None:
+            warnings.warn(
+                "Pass `defaults=HTTPDefaults(timeout_seconds=...)` instead of "
+                "`timeout=...`. The `timeout` argument is deprecated and will "
+                "be removed in 0.3.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            defaults = HTTPDefaults(timeout_seconds=float(timeout))
+        super().__init__(defaults=defaults)
+        self._api_key = api_key or GESTIS_DEFAULT_KEY
 
     @property
     def name(self) -> str:
@@ -77,40 +105,6 @@ class GESTISProvider:
     @property
     def supported_domains(self) -> list[str]:
         return ["substance", "sds"]
-
-    _CONFIDENCE_DENOMINATOR = 20
-
-    def __init__(self, timeout: int = API_TIMEOUT, api_key: str = GESTIS_DEFAULT_KEY) -> None:
-        self._timeout = timeout
-        self._api_key = api_key
-        self._session = None
-
-    def __repr__(self) -> str:
-        return f"GESTISProvider(timeout={self._timeout})"
-
-    def close(self) -> None:
-        """Close the underlying HTTP session."""
-        if self._session is not None:
-            self._session.close()
-            self._session = None
-
-    def _get_session(self):
-        if self._session is None:
-            import requests
-
-            self._session = requests.Session()
-            self._session.headers.update({
-                "Accept": "application/json",
-                "User-Agent": "iil-enrichment/0.1",
-            })
-        return self._session
-
-    def can_enrich(self, domain: str, natural_key: str) -> bool:
-        """GESTIS can enrich if key looks like a CAS number or substance name."""
-        if domain not in self.supported_domains:
-            return False
-        key = natural_key.strip()
-        return bool(key) and (bool(CAS_PATTERN.match(key)) or len(key) >= 3)
 
     def enrich(self, domain: str, natural_key: str) -> EnrichmentResult:
         """Fetch substance data from GESTIS API."""
@@ -126,38 +120,44 @@ class GESTISProvider:
 
     def _search(self, query: str) -> dict | None:
         """Search GESTIS, return best match dict with zvg_nr, name, cas_nr."""
-        session = self._get_session()
+        client = self._get_client()
         is_cas = bool(CAS_PATTERN.match(query))
-        field = "cas_nr" if is_cas else "stoffname"
+        search_field = "cas_nr" if is_cas else "stoffname"
 
         url = f"{GESTIS_API}/search"
-        params = {"exact": "true", field: query, "api_key": self._api_key}
-        resp = session.get(url, params=params, timeout=self._timeout)
+        params = {"exact": "true", search_field: query, "api_key": self._api_key}
+        data = get_json(client, url, params=params, defaults=self._defaults)
 
-        if resp.status_code != 200:
+        if not data:
             if not is_cas:
-                params = {"exact": "false", field: query, "api_key": self._api_key}
-                resp = session.get(url, params=params, timeout=self._timeout)
-            if resp.status_code != 200:
+                params = {
+                    "exact": "false",
+                    search_field: query,
+                    "api_key": self._api_key,
+                }
+                data = get_json(client, url, params=params, defaults=self._defaults)
+            if not data:
                 return None
 
-        data = resp.json()
-        if not data:
-            return None
-
-        return data[0]
+        if isinstance(data, list) and data:
+            return data[0]
+        return None
 
     def _fetch_article(self, hit: dict, natural_key: str) -> EnrichmentResult:
         """Fetch full GESTIS article by search hit dict."""
         zvg = hit.get("zvg_nr", "")
-        session = self._get_session()
         url = f"{GESTIS_API}/article/de/{zvg}"
-        resp = session.get(url, params={"api_key": self._api_key}, timeout=self._timeout)
+        article = get_json(
+            self._get_client(),
+            url,
+            params={"api_key": self._api_key},
+            defaults=self._defaults,
+        )
 
-        if resp.status_code != 200:
-            return EnrichmentResult(source=self.name, confidence=0.0, natural_key=natural_key)
-
-        article = resp.json()
+        if not isinstance(article, dict):
+            return EnrichmentResult(
+                source=self.name, confidence=0.0, natural_key=natural_key
+            )
 
         # Flatten hauptkapitel/unterkapitel/drnr → {drnr: text}
         chapters: dict[str, str] = {}

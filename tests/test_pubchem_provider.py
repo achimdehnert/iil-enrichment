@@ -1,24 +1,33 @@
-"""Tests for PubChem provider — mock HTTP, verify property extraction."""
+"""Tests for PubChem provider — respx-mocked HTTP, verify property extraction."""
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
+import httpx
 import pytest
+import respx
 
+from enrichment.config import HTTPDefaults
 from enrichment.providers.pubchem import PubChemProvider
 
-
-@pytest.fixture()
-def provider():
-    return PubChemProvider(timeout=5)
+PUBCHEM_BASE = "https://pubchem.ncbi.nlm.nih.gov"
 
 
 @pytest.fixture()
-def _mock_session(provider):
-    session = MagicMock()
-    provider._session = session
-    return session
+def fast_defaults(tmp_path):
+    return HTTPDefaults(
+        timeout_seconds=2,
+        max_retries=1,
+        backoff_initial=0.01,
+        backoff_max=0.05,
+        cache_enabled=False,
+        cache_dir=tmp_path,
+        rate_limit_enabled=False,
+    )
+
+
+@pytest.fixture()
+def provider(fast_defaults):
+    return PubChemProvider(defaults=fast_defaults)
 
 
 CID_RESPONSE = {"IdentifierList": {"CID": [180]}}
@@ -101,17 +110,21 @@ class TestPubChemCanEnrich:
 
 
 class TestPubChemEnrich:
-    def _setup_responses(self, session):
-        cid_resp = MagicMock(status_code=200)
-        cid_resp.json.return_value = CID_RESPONSE
-        prop_resp = MagicMock(status_code=200)
-        prop_resp.json.return_value = PROPERTY_RESPONSE
-        ghs_resp = MagicMock(status_code=200)
-        ghs_resp.json.return_value = GHS_RESPONSE
-        session.get.side_effect = [cid_resp, prop_resp, ghs_resp]
+    @staticmethod
+    def _setup_routes():
+        respx.get(url__regex=r".*/pug/compound/name/.*/cids/JSON").mock(
+            return_value=httpx.Response(200, json=CID_RESPONSE)
+        )
+        respx.get(url__regex=r".*/pug/compound/cid/.*/property/.*").mock(
+            return_value=httpx.Response(200, json=PROPERTY_RESPONSE)
+        )
+        respx.get(url__regex=r".*/pug_view/data/compound/.*/JSON.*").mock(
+            return_value=httpx.Response(200, json=GHS_RESPONSE)
+        )
 
-    def test_should_extract_molecular_data(self, provider, _mock_session):
-        self._setup_responses(_mock_session)
+    @respx.mock
+    def test_should_extract_molecular_data(self, provider):
+        self._setup_routes()
         result = provider.enrich("substance", "67-64-1")
 
         assert result.properties["molecular_formula"].value == "C3H6O"
@@ -119,8 +132,9 @@ class TestPubChemEnrich:
         assert result.properties["iupac_name"].value == "propan-2-one"
         assert result.properties["pubchem_cid"].value == 180
 
-    def test_should_extract_ghs(self, provider, _mock_session):
-        self._setup_responses(_mock_session)
+    @respx.mock
+    def test_should_extract_ghs(self, provider):
+        self._setup_routes()
         result = provider.enrich("substance", "67-64-1")
 
         assert "H225" in result.properties["h_statements"].value
@@ -129,27 +143,33 @@ class TestPubChemEnrich:
         assert "GHS02" in result.properties["pictograms"].value
         assert "GHS07" in result.properties["pictograms"].value
 
-    def test_should_extract_p_codes(self, provider, _mock_session):
-        self._setup_responses(_mock_session)
+    @respx.mock
+    def test_should_extract_p_codes(self, provider):
+        self._setup_routes()
         result = provider.enrich("substance", "67-64-1")
 
         assert "P210" in result.properties["p_statements"].value
         assert "P233" in result.properties["p_statements"].value
 
-    def test_should_handle_cid_not_found(self, provider, _mock_session):
-        resp = MagicMock(status_code=404)
-        _mock_session.get.return_value = resp
-
+    @respx.mock
+    def test_should_handle_cid_not_found(self, provider):
+        respx.get(url__regex=r".*/pug/compound/name/.*/cids/JSON").mock(
+            return_value=httpx.Response(404)
+        )
         result = provider.enrich("substance", "unknown-substance")
         assert result.is_empty
 
-    def test_should_handle_api_error(self, provider, _mock_session):
-        _mock_session.get.side_effect = ConnectionError("timeout")
+    @respx.mock
+    def test_should_handle_api_error(self, provider):
+        respx.get(url__regex=r".*/pug/compound/name/.*/cids/JSON").mock(
+            side_effect=httpx.ConnectError("connection refused")
+        )
         result = provider.enrich("substance", "67-64-1")
         assert result.is_empty
 
-    def test_should_have_confidence(self, provider, _mock_session):
-        self._setup_responses(_mock_session)
+    @respx.mock
+    def test_should_have_confidence(self, provider):
+        self._setup_routes()
         result = provider.enrich("substance", "67-64-1")
         assert result.confidence > 0.0
         assert result.source == "PubChem"

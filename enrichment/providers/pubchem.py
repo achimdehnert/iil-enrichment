@@ -1,6 +1,6 @@
 """PubChem Provider — NIH compound database.
 
-Requires: requests (pip install iil-enrichment[pubchem])
+Requires: httpx + tenacity (pip install iil-enrichment[pubchem])
 
 Extracts:
 - Molecular formula, weight, IUPAC name
@@ -14,8 +14,12 @@ from __future__ import annotations
 
 import logging
 import re
+import warnings
 
-from enrichment.types import CAS_PATTERN, EnrichmentResult, PropertyValue, ValueType
+from enrichment._http import get_json
+from enrichment.config import HTTPDefaults
+from enrichment.providers._base import HTTPProviderBase
+from enrichment.types import EnrichmentResult, PropertyValue, ValueType
 
 logger = logging.getLogger(__name__)
 
@@ -23,8 +27,27 @@ PUBCHEM_BASE = "https://pubchem.ncbi.nlm.nih.gov/rest"
 API_TIMEOUT = 15
 
 
-class PubChemProvider:
+class PubChemProvider(HTTPProviderBase):
     """Enrichment provider for PubChem compound data."""
+
+    _CONFIDENCE_DENOMINATOR = 10
+
+    def __init__(
+        self,
+        timeout: int | None = None,
+        *,
+        defaults: HTTPDefaults | None = None,
+    ) -> None:
+        if timeout is not None:
+            warnings.warn(
+                "Pass `defaults=HTTPDefaults(timeout_seconds=...)` instead of "
+                "`timeout=...`. The `timeout` argument is deprecated and will "
+                "be removed in 0.3.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            defaults = HTTPDefaults(timeout_seconds=float(timeout))
+        super().__init__(defaults=defaults)
 
     @property
     def name(self) -> str:
@@ -33,38 +56,6 @@ class PubChemProvider:
     @property
     def supported_domains(self) -> list[str]:
         return ["substance", "sds"]
-
-    _CONFIDENCE_DENOMINATOR = 10
-
-    def __init__(self, timeout: int = API_TIMEOUT) -> None:
-        self._timeout = timeout
-        self._session = None
-
-    def __repr__(self) -> str:
-        return f"PubChemProvider(timeout={self._timeout})"
-
-    def close(self) -> None:
-        """Close the underlying HTTP session."""
-        if self._session is not None:
-            self._session.close()
-            self._session = None
-
-    def _get_session(self):
-        if self._session is None:
-            import requests
-
-            self._session = requests.Session()
-            self._session.headers.update({
-                "Accept": "application/json",
-                "User-Agent": "iil-enrichment/0.1",
-            })
-        return self._session
-
-    def can_enrich(self, domain: str, natural_key: str) -> bool:
-        if domain not in self.supported_domains:
-            return False
-        key = natural_key.strip()
-        return bool(key) and (bool(CAS_PATTERN.match(key)) or len(key) >= 3)
 
     def enrich(self, domain: str, natural_key: str) -> EnrichmentResult:
         """Fetch compound data from PubChem."""
@@ -80,62 +71,48 @@ class PubChemProvider:
 
     def _resolve_cid(self, query: str) -> int | None:
         """Resolve CAS or name to PubChem CID."""
-        session = self._get_session()
         url = f"{PUBCHEM_BASE}/pug/compound/name/{query}/cids/JSON"
-
-        try:
-            resp = session.get(url, timeout=self._timeout)
-            if resp.status_code != 200:
-                return None
-            data = resp.json()
-            cids = data.get("IdentifierList", {}).get("CID", [])
-            return cids[0] if cids else None
-        except Exception:
-            logger.exception("PubChem CID resolution failed for %s", query)
+        data = get_json(self._get_client(), url, defaults=self._defaults)
+        if not isinstance(data, dict):
             return None
+        cids = data.get("IdentifierList", {}).get("CID", [])
+        return cids[0] if cids else None
 
     def _fetch_compound(self, cid: int, natural_key: str) -> EnrichmentResult:
         """Fetch molecular properties for a CID."""
-        session = self._get_session()
-        properties: dict[str, PropertyValue] = {}
+        client = self._get_client()
+        properties: dict[str, PropertyValue] = {
+            "pubchem_cid": PropertyValue(value=cid, value_type="numeric"),
+        }
         raw_sections: dict[str, str] = {}
-
-        properties["pubchem_cid"] = PropertyValue(value=cid, value_type="numeric")
 
         # Molecular properties
         prop_url = (
             f"{PUBCHEM_BASE}/pug/compound/cid/{cid}"
             f"/property/MolecularFormula,MolecularWeight,IUPACName/JSON"
         )
-        try:
-            resp = session.get(prop_url, timeout=self._timeout)
-            if resp.status_code == 200:
-                data = resp.json()
-                props = data.get("PropertyTable", {}).get("Properties", [{}])[0]
-                if formula := props.get("MolecularFormula"):
-                    properties["molecular_formula"] = PropertyValue(
-                        value=formula, value_type="text"
-                    )
-                if weight := props.get("MolecularWeight"):
-                    properties["molecular_weight"] = PropertyValue(
-                        value=float(weight), unit="g/mol", value_type="numeric"
-                    )
-                if iupac := props.get("IUPACName"):
-                    properties["iupac_name"] = PropertyValue(value=iupac, value_type="text")
-        except Exception:
-            logger.exception("PubChem properties fetch failed for CID %d", cid)
+        if prop_data := get_json(client, prop_url, defaults=self._defaults):
+            props = prop_data.get("PropertyTable", {}).get("Properties", [{}])[0]
+            if formula := props.get("MolecularFormula"):
+                properties["molecular_formula"] = PropertyValue(
+                    value=formula, value_type="text"
+                )
+            if weight := props.get("MolecularWeight"):
+                properties["molecular_weight"] = PropertyValue(
+                    value=float(weight), unit="g/mol", value_type="numeric"
+                )
+            if iupac := props.get("IUPACName"):
+                properties["iupac_name"] = PropertyValue(value=iupac, value_type="text")
 
         # GHS classification
-        ghs_url = f"{PUBCHEM_BASE}/pug_view/data/compound/{cid}/JSON?heading=GHS+Classification"
-        try:
-            resp = session.get(ghs_url, timeout=self._timeout)
-            if resp.status_code == 200:
-                self._parse_ghs(resp.json(), properties, raw_sections)
-        except Exception:
-            logger.exception("PubChem GHS fetch failed for CID %d", cid)
+        ghs_url = (
+            f"{PUBCHEM_BASE}/pug_view/data/compound/{cid}/JSON"
+            f"?heading=GHS+Classification"
+        )
+        if ghs_data := get_json(client, ghs_url, defaults=self._defaults):
+            self._parse_ghs(ghs_data, properties, raw_sections)
 
         confidence = min(1.0, len(properties) / self._CONFIDENCE_DENOMINATOR)
-
         return EnrichmentResult(
             source=self.name,
             confidence=confidence,
@@ -180,7 +157,7 @@ class PubChemProvider:
                                 for code in re.findall(r"P\d{3}", s.get("String", "")):
                                     p_codes.add(code)
 
-                        elif heading == "GHS Signal Word" or heading == "Signal":
+                        elif heading in ("GHS Signal Word", "Signal"):
                             for s in strings:
                                 word = s.get("String", "").strip().lower()
                                 if word in ("danger", "warning"):

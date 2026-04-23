@@ -4,7 +4,7 @@ Bridge managed records with external knowledge sources.
 Pure Python core, optional Django integration.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 from enrichment.ghs import H_STATEMENTS_DE, h_codes_to_descriptions
 from enrichment.provider import EnrichmentProvider

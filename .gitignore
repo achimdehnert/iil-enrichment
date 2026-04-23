@@ -6,3 +6,5 @@ dist/
 build/
 .venv/
 .eggs/
+.cache/
+.ruff_cache/

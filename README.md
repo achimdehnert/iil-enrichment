@@ -82,6 +82,32 @@ revision.run_enrichment()  # → fetches GESTIS + PubChem, stores in enrichment_
 | `GESTISProvider` | substance, sds | AGW, first aid, storage, transport, WGK, physical properties |
 | `PubChemProvider` | substance, sds | Molecular data, GHS classification, H/P codes |
 
+## Configuration via Environment
+
+All settings have sensible defaults and can be overridden per environment:
+
+| Env-Var                          | Default                     | Description                                |
+|----------------------------------|-----------------------------|--------------------------------------------|
+| `IIL_ENRICHMENT_TIMEOUT`         | `15`                        | HTTP timeout in seconds                    |
+| `IIL_ENRICHMENT_MAX_RETRIES`     | `3`                         | Max retry attempts per request             |
+| `IIL_ENRICHMENT_BACKOFF_INITIAL` | `0.5`                       | Initial backoff in seconds                 |
+| `IIL_ENRICHMENT_BACKOFF_MAX`     | `8.0`                       | Max backoff in seconds                     |
+| `IIL_ENRICHMENT_CACHE`           | `1`                         | Cache on (`1`) or off (`0`)                |
+| `IIL_ENRICHMENT_CACHE_DIR`       | `./.cache/iil-enrichment/`  | Cache directory                            |
+| `IIL_ENRICHMENT_RATE_LIMIT`      | `1`                         | Rate limit on (`1`) or off (`0`)           |
+| `IIL_ENRICHMENT_USER_AGENT`      | `iil-enrichment/0.2 ...`   | User-Agent for external APIs               |
+| `GESTIS_API_KEY`                 | (public demo key)           | Own DGUV key recommended for production    |
+
+Or configure programmatically:
+
+```python
+from enrichment.config import HTTPDefaults
+from enrichment.providers.gestis import GESTISProvider
+
+defaults = HTTPDefaults(timeout_seconds=30, max_retries=5, cache_enabled=True)
+provider = GESTISProvider(defaults=defaults)
+```
+
 ## Custom Provider
 
 ```python
