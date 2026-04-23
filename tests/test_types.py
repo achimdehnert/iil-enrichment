@@ -103,7 +103,10 @@ class TestEnrichmentResult:
         assert d["flash_point_c"]["value_type"] == "numeric"
 
     def test_should_serialize_property_value_to_dict(self):
-        pv = PropertyValue(value=40.0, unit="°C", section="9.1", value_type=ValueType.NUMERIC, note="closed cup")
+        pv = PropertyValue(
+            value=40.0, unit="°C", section="9.1",
+            value_type=ValueType.NUMERIC, note="closed cup",
+        )
         d = pv.to_dict()
         assert d == {
             "value": 40.0,
