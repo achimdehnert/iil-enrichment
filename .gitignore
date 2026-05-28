@@ -8,3 +8,5 @@ build/
 .eggs/
 .cache/
 .ruff_cache/
+NEXT.md
+.windsurfignore
