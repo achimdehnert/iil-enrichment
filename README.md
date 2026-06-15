@@ -136,6 +136,20 @@ class MyProvider:
         )
 ```
 
+## Ecosystem
+
+`iil-enrichment` ist die **Anreicherungs-Stufe** einer dreiteiligen Datenpipeline:
+
+```
+iil-ingest  →  iil-enrichment  →  iil-fieldprefill
+(extract)      (enrich)           (prefill form fields)
+```
+
+Eingang ist ein *natural key* (z. B. CAS-Nummer, oft aus `iil-ingest`-Text extrahiert);
+Ausgang `EnrichmentResult.properties` speist den Kontext für `iil-fieldprefill`.
+Vollständiger Flow, reale Typen und ein lauffähiges End-to-End-Beispiel:
+**[platform/docs/ecosystem/iil-data-pipeline.md](https://github.com/achimdehnert/platform/blob/main/docs/ecosystem/iil-data-pipeline.md)**.
+
 ## License
 
 MIT
