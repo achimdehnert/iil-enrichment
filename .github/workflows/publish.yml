@@ -1,0 +1,52 @@
+name: Publish to PyPI
+
+# Closes #2 — unblocks risk-hub consumption of iil-enrichment (issue #177 there).
+# Mirrors the org-canonical pattern (iil-adrfw): PyPI Trusted Publishing via OIDC,
+# no long-lived API token. Build with hatchling (this package's build backend).
+#
+# PREREQUISITE (one-time, PyPI side): register a Trusted Publisher for this repo
+# at https://pypi.org/manage/account/publishing/ —
+#   PyPI project: iil-enrichment · Owner+repo: <org>/iil-enrichment ·
+#   Workflow: publish.yml · Environment: pypi
+# If/when the repo is transferred to the iilgmbh org, re-point that binding to
+# iilgmbh/iil-enrichment (the binding is org/repo-specific; the workflow is not).
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (build + twine check, skip upload)"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    # The PyPI trusted publisher is registered with environment "pypi".
+    # Declaring it makes the OIDC token carry that environment claim so it matches.
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write  # OIDC token for PyPI Trusted Publishing (no API token)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        run: pip install hatchling twine
+
+      - name: Build
+        run: python -m hatchling build
+
+      - name: Check dist
+        run: twine check dist/*
+
+      - name: Publish to PyPI (Trusted Publishing / OIDC)
+        if: inputs.dry_run == 'false'
+        uses: pypa/gh-action-pypi-publish@release/v1
