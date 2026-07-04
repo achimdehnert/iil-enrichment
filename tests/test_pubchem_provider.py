@@ -34,66 +34,78 @@ CID_RESPONSE = {"IdentifierList": {"CID": [180]}}
 
 PROPERTY_RESPONSE = {
     "PropertyTable": {
-        "Properties": [{
-            "CID": 180,
-            "MolecularFormula": "C3H6O",
-            "MolecularWeight": 58.08,
-            "IUPACName": "propan-2-one",
-        }]
+        "Properties": [
+            {
+                "CID": 180,
+                "MolecularFormula": "C3H6O",
+                "MolecularWeight": 58.08,
+                "IUPACName": "propan-2-one",
+            }
+        ]
     }
 }
 
 GHS_RESPONSE = {
     "Record": {
-        "Section": [{
-            "Section": [
-                {
-                    "TOCHeading": "GHS Hazard Statements",
-                    "Information": [{
-                        "Value": {
-                            "StringWithMarkup": [
-                                {"String": "H225 Highly flammable liquid and vapour"},
-                                {"String": "H319 Causes serious eye irritation"},
-                                {"String": "H336 May cause drowsiness or dizziness"},
-                            ]
-                        }
-                    }],
-                },
-                {
-                    "TOCHeading": "Precautionary Statement Codes",
-                    "Information": [{
-                        "Value": {
-                            "StringWithMarkup": [
-                                {"String": "P210, P233, P240, P241"},
-                            ]
-                        }
-                    }],
-                },
-                {
-                    "TOCHeading": "GHS Signal Word",
-                    "Information": [{
-                        "Value": {
-                            "StringWithMarkup": [
-                                {"String": "Danger"},
-                            ]
-                        }
-                    }],
-                },
-                {
-                    "TOCHeading": "Pictogram(s)",
-                    "Information": [{
-                        "Value": {
-                            "StringWithMarkup": [
-                                {
-                                    "String": "GHS02",
-                                    "Markup": [{"Extra": "GHS07"}],
-                                },
-                            ]
-                        }
-                    }],
-                },
-            ]
-        }]
+        "Section": [
+            {
+                "Section": [
+                    {
+                        "TOCHeading": "GHS Hazard Statements",
+                        "Information": [
+                            {
+                                "Value": {
+                                    "StringWithMarkup": [
+                                        {"String": "H225 Highly flammable liquid and vapour"},
+                                        {"String": "H319 Causes serious eye irritation"},
+                                        {"String": "H336 May cause drowsiness or dizziness"},
+                                    ]
+                                }
+                            }
+                        ],
+                    },
+                    {
+                        "TOCHeading": "Precautionary Statement Codes",
+                        "Information": [
+                            {
+                                "Value": {
+                                    "StringWithMarkup": [
+                                        {"String": "P210, P233, P240, P241"},
+                                    ]
+                                }
+                            }
+                        ],
+                    },
+                    {
+                        "TOCHeading": "GHS Signal Word",
+                        "Information": [
+                            {
+                                "Value": {
+                                    "StringWithMarkup": [
+                                        {"String": "Danger"},
+                                    ]
+                                }
+                            }
+                        ],
+                    },
+                    {
+                        "TOCHeading": "Pictogram(s)",
+                        "Information": [
+                            {
+                                "Value": {
+                                    "StringWithMarkup": [
+                                        {
+                                            "String": "GHS02",
+                                            "Markup": [{"Extra": "GHS07"}],
+                                        },
+                                    ]
+                                }
+                            }
+                        ],
+                    },
+                ]
+            }
+        ]
     }
 }
 

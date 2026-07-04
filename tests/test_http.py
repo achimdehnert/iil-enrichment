@@ -44,9 +44,7 @@ class TestRetry:
 
     @respx.mock
     def test_should_not_retry_on_404(self, fast_defaults):
-        route = respx.get("https://api.test/x").mock(
-            return_value=httpx.Response(404)
-        )
+        route = respx.get("https://api.test/x").mock(return_value=httpx.Response(404))
         with build_client(defaults=fast_defaults) as client:
             data = get_json(client, "https://api.test/x", defaults=fast_defaults)
 
@@ -69,9 +67,7 @@ class TestRetry:
 
     @respx.mock
     def test_should_give_up_after_max_retries(self, fast_defaults):
-        respx.get("https://api.test/x").mock(
-            return_value=httpx.Response(503)
-        )
+        respx.get("https://api.test/x").mock(return_value=httpx.Response(503))
         with build_client(defaults=fast_defaults) as client, pytest.raises(httpx.HTTPStatusError):
             get_json(client, "https://api.test/x", defaults=fast_defaults)
 
@@ -91,9 +87,7 @@ class TestRetry:
 
     @respx.mock
     def test_should_not_retry_on_400(self, fast_defaults):
-        route = respx.get("https://api.test/x").mock(
-            return_value=httpx.Response(400)
-        )
+        route = respx.get("https://api.test/x").mock(return_value=httpx.Response(400))
         with build_client(defaults=fast_defaults) as client:
             data = get_json(client, "https://api.test/x", defaults=fast_defaults)
 
@@ -111,9 +105,7 @@ class TestCache:
             cache_dir=tmp_path,
             rate_limit_enabled=False,
         )
-        client = build_client(
-            defaults=defaults, cache_namespace="test", cache_ttl=3600
-        )
+        client = build_client(defaults=defaults, cache_namespace="test", cache_ttl=3600)
         # The client should use hishel's SyncCacheProxy as transport.
         transport = client._transport
         assert type(transport).__name__ == "SyncCacheProxy"
@@ -122,9 +114,7 @@ class TestCache:
         client.close()
 
     def test_should_skip_cache_when_disabled(self, fast_defaults):
-        client = build_client(
-            defaults=fast_defaults, cache_namespace="test", cache_ttl=3600
-        )
+        client = build_client(defaults=fast_defaults, cache_namespace="test", cache_ttl=3600)
         assert type(client._transport).__name__ != "SyncCacheProxy"
         client.close()
 
@@ -139,9 +129,7 @@ class TestRateLimit:
             cache_dir=tmp_path,
             rate_limit_enabled=True,
         )
-        respx.get("https://api.test/x").mock(
-            return_value=httpx.Response(200, json={"ok": True})
-        )
+        respx.get("https://api.test/x").mock(return_value=httpx.Response(200, json={"ok": True}))
         # 2 req/s → 3 calls take at least ~1s
         with build_client(defaults=defaults, rate_limit_per_second=2.0) as client:
             start = time.monotonic()

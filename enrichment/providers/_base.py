@@ -66,14 +66,10 @@ class HTTPProviderBase:
                 if self._client is None:
                     provider_name = self.name
                     ttl = self.cache_ttl_seconds or DEFAULT_TTLS.get(provider_name)
-                    rate = self.rate_limit_per_second or DEFAULT_RATE_LIMITS.get(
-                        provider_name
-                    )
+                    rate = self.rate_limit_per_second or DEFAULT_RATE_LIMITS.get(provider_name)
                     self._client = build_client(
                         defaults=self._defaults,
-                        cache_namespace=(
-                            provider_name.lower() if provider_name else None
-                        ),
+                        cache_namespace=(provider_name.lower() if provider_name else None),
                         cache_ttl=ttl,
                         rate_limit_per_second=rate,
                     )

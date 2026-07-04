@@ -104,8 +104,11 @@ class TestEnrichmentResult:
 
     def test_should_serialize_property_value_to_dict(self):
         pv = PropertyValue(
-            value=40.0, unit="°C", section="9.1",
-            value_type=ValueType.NUMERIC, note="closed cup",
+            value=40.0,
+            unit="°C",
+            section="9.1",
+            value_type=ValueType.NUMERIC,
+            note="closed cup",
         )
         d = pv.to_dict()
         assert d == {

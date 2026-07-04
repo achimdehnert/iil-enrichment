@@ -52,9 +52,7 @@ class EnrichmentRegistry:
     def unregister(self, domain: str, provider_name: str) -> bool:
         """Remove a provider by name. Returns True if found."""
         before = len(self._providers[domain])
-        self._providers[domain] = [
-            p for p in self._providers[domain] if p.name != provider_name
-        ]
+        self._providers[domain] = [p for p in self._providers[domain] if p.name != provider_name]
         return len(self._providers[domain]) < before
 
     def reset(self) -> None:

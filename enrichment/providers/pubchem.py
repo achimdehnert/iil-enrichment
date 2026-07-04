@@ -94,9 +94,7 @@ class PubChemProvider(HTTPProviderBase):
         if prop_data := get_json(client, prop_url, defaults=self._defaults):
             props = prop_data.get("PropertyTable", {}).get("Properties", [{}])[0]
             if formula := props.get("MolecularFormula"):
-                properties["molecular_formula"] = PropertyValue(
-                    value=formula, value_type="text"
-                )
+                properties["molecular_formula"] = PropertyValue(value=formula, value_type="text")
             if weight := props.get("MolecularWeight"):
                 properties["molecular_weight"] = PropertyValue(
                     value=float(weight), unit="g/mol", value_type="numeric"
@@ -105,10 +103,7 @@ class PubChemProvider(HTTPProviderBase):
                 properties["iupac_name"] = PropertyValue(value=iupac, value_type="text")
 
         # GHS classification
-        ghs_url = (
-            f"{PUBCHEM_BASE}/pug_view/data/compound/{cid}/JSON"
-            f"?heading=GHS+Classification"
-        )
+        ghs_url = f"{PUBCHEM_BASE}/pug_view/data/compound/{cid}/JSON?heading=GHS+Classification"
         if ghs_data := get_json(client, ghs_url, defaults=self._defaults):
             self._parse_ghs(ghs_data, properties, raw_sections)
 
