@@ -28,9 +28,7 @@ from enrichment.types import CAS_PATTERN, EnrichmentResult, PropertyValue, Value
 logger = logging.getLogger(__name__)
 
 GESTIS_API = "https://gestis-api.dguv.de/api"
-GESTIS_DEFAULT_KEY = os.environ.get(
-    "GESTIS_API_KEY", "dddiiasjhduuvnnasdkkwUUSHhjaPPKMasd"
-)
+GESTIS_DEFAULT_KEY = os.environ.get("GESTIS_API_KEY", "dddiiasjhduuvnnasdkkwUUSHhjaPPKMasd")
 API_TIMEOUT = 15
 
 # CMR H-codes for is_cmr detection
@@ -155,9 +153,7 @@ class GESTISProvider(HTTPProviderBase):
         )
 
         if not isinstance(article, dict):
-            return EnrichmentResult(
-                source=self.name, confidence=0.0, natural_key=natural_key
-            )
+            return EnrichmentResult(source=self.name, confidence=0.0, natural_key=natural_key)
 
         # Flatten hauptkapitel/unterkapitel/drnr → {drnr: text}
         chapters: dict[str, str] = {}
@@ -213,9 +209,7 @@ class GESTISProvider(HTTPProviderBase):
 
             if drnr in _CHAPTER_MAP:
                 prop_key, section, vtype = _CHAPTER_MAP[drnr]
-                properties[prop_key] = PropertyValue(
-                    value=text, section=section, value_type=vtype
-                )
+                properties[prop_key] = PropertyValue(value=text, section=section, value_type=vtype)
 
         # Parse physical data from sub-chapters 06xx
         self._parse_physical_properties(chapters, properties)
@@ -249,13 +243,13 @@ class GESTISProvider(HTTPProviderBase):
 
             # Density is in sub-chapter 0604
             if drnr == "0604":
-                density_match = re.search(
-                    r"(\d+[.,]\d+)\s*(?:g/cm|kg/m)", text
-                )
+                density_match = re.search(r"(\d+[.,]\d+)\s*(?:g/cm|kg/m)", text)
                 if density_match:
                     val = float(density_match.group(1).replace(",", "."))
                     properties["density"] = PropertyValue(
-                        value=val, unit="g/cm³", section="9.1",
+                        value=val,
+                        unit="g/cm³",
+                        section="9.1",
                         value_type=ValueType.NUMERIC,
                     )
 
@@ -282,9 +276,7 @@ class GESTISProvider(HTTPProviderBase):
                 value=sorted(h_codes), section="2.1", value_type=ValueType.LIST
             )
             is_cmr = bool(h_codes & _CMR_CODES)
-            properties["is_cmr"] = PropertyValue(
-                value=is_cmr, value_type=ValueType.BOOLEAN
-            )
+            properties["is_cmr"] = PropertyValue(value=is_cmr, value_type=ValueType.BOOLEAN)
 
         if "Gefahr" in txt or "Danger" in txt:
             properties["signal_word"] = PropertyValue(
@@ -313,7 +305,9 @@ class GESTISProvider(HTTPProviderBase):
             mw = re.search(r"Molare Masse:\s*([\d.,]+)", txt)
             if mw:
                 properties["molecular_weight"] = PropertyValue(
-                    value=mw.group(1), unit="g/mol", section="3",
+                    value=mw.group(1),
+                    unit="g/mol",
+                    section="3",
                     value_type=ValueType.TEXT,
                 )
             mf = re.match(r"([A-Z][A-Za-z0-9]+)", txt)

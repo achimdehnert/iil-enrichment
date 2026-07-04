@@ -35,18 +35,12 @@ class HTTPDefaults:
         default_factory=lambda: int(os.environ.get("IIL_ENRICHMENT_MAX_RETRIES", "3"))
     )
     backoff_initial: float = field(
-        default_factory=lambda: float(
-            os.environ.get("IIL_ENRICHMENT_BACKOFF_INITIAL", "0.5")
-        )
+        default_factory=lambda: float(os.environ.get("IIL_ENRICHMENT_BACKOFF_INITIAL", "0.5"))
     )
     backoff_max: float = field(
-        default_factory=lambda: float(
-            os.environ.get("IIL_ENRICHMENT_BACKOFF_MAX", "8.0")
-        )
+        default_factory=lambda: float(os.environ.get("IIL_ENRICHMENT_BACKOFF_MAX", "8.0"))
     )
-    cache_enabled: bool = field(
-        default_factory=lambda: _env_bool("IIL_ENRICHMENT_CACHE", True)
-    )
+    cache_enabled: bool = field(default_factory=lambda: _env_bool("IIL_ENRICHMENT_CACHE", True))
     cache_dir: Path = field(default_factory=_default_cache_dir)
     rate_limit_enabled: bool = field(
         default_factory=lambda: _env_bool("IIL_ENRICHMENT_RATE_LIMIT", True)

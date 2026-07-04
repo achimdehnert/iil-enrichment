@@ -130,13 +130,9 @@ def build_client(
             )
         except ImportError:
             logger.info("hishel not installed — proceeding without HTTP cache")
-            client = httpx.Client(
-                headers=headers, timeout=timeout, follow_redirects=True
-            )
+            client = httpx.Client(headers=headers, timeout=timeout, follow_redirects=True)
     else:
-        client = httpx.Client(
-            headers=headers, timeout=timeout, follow_redirects=True
-        )
+        client = httpx.Client(headers=headers, timeout=timeout, follow_redirects=True)
 
     # Attach rate limiter (or None) to the client instance.
     if rate_limit_per_second and defaults.rate_limit_enabled:

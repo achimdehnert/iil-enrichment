@@ -94,10 +94,7 @@ ARTICLE_RESPONSE = {
             "unterkapitel": [
                 {
                     "drnr": "1303",
-                    "text": (
-                        "Gefahr H225 H319 H336 "
-                        "Entzündbare Flüssigkeiten Kategorie 2"
-                    ),
+                    "text": ("Gefahr H225 H319 H336 Entzündbare Flüssigkeiten Kategorie 2"),
                 },
             ],
         },
@@ -197,9 +194,7 @@ class TestGESTISEnrich:
 
     @respx.mock
     def test_should_handle_search_not_found(self, provider):
-        respx.get(url__regex=r".*/api/search.*").mock(
-            return_value=httpx.Response(200, json=[])
-        )
+        respx.get(url__regex=r".*/api/search.*").mock(return_value=httpx.Response(200, json=[]))
         result = provider.enrich("substance", "99-99-9")
 
         assert result.is_empty
@@ -235,10 +230,12 @@ class TestGESTISEnrich:
             "hauptkapitel": [
                 {
                     "drnr": "13",
-                    "unterkapitel": [{
-                        "drnr": "1303",
-                        "text": "Gefahr H225 H350 H304 H315",
-                    }],
+                    "unterkapitel": [
+                        {
+                            "drnr": "1303",
+                            "text": "Gefahr H225 H350 H304 H315",
+                        }
+                    ],
                 },
             ],
         }
