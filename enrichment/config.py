@@ -13,7 +13,7 @@ from pathlib import Path
 
 def _default_cache_dir() -> Path:
     """Project-relative cache dir. Override via IIL_ENRICHMENT_CACHE_DIR."""
-    override = os.environ.get("IIL_ENRICHMENT_CACHE_DIR")
+    override = os.environ.get("IIL_ENRICHMENT_CACHE_DIR", "")
     return Path(override) if override else Path.cwd() / ".cache" / "iil-enrichment"
 
 
