@@ -1,27 +1,31 @@
 name: Publish to PyPI
 
+# OIDC-only (ADR-278): kein Token, Trusted Publisher auf PyPI = (achimdehnert/iil-enrichment, publish.yml, environment pypi).
 # Closes #2 — unblocks risk-hub consumption of iil-enrichment (issue #177 there).
-# Mirrors the org-canonical pattern (iil-adrfw): PyPI Trusted Publishing via OIDC,
-# no long-lived API token. Build with hatchling (this package's build backend).
+# Build-Backend: hatchling (dieses Paket).
+# Gates vor dem irreversiblen Upload: Tests, Tag == pyproject.version, gitleaks auf dem gebauten Artefakt (ADR-226).
 #
-# PREREQUISITE (one-time, PyPI side): register a Trusted Publisher for this repo
-# at https://pypi.org/manage/account/publishing/ —
-#   PyPI project: iil-enrichment · Owner+repo: <org>/iil-enrichment ·
+# PREREQUISITE (einmalig, PyPI-seitig): Trusted Publisher fuer dieses Repo registrieren
+# unter https://pypi.org/manage/account/publishing/ —
+#   PyPI project: iil-enrichment · Owner+Repo: achimdehnert/iil-enrichment ·
 #   Workflow: publish.yml · Environment: pypi
-# If/when the repo is transferred to the iilgmbh org, re-point that binding to
-# iilgmbh/iil-enrichment (the binding is org/repo-specific; the workflow is not).
+# Wird das Repo in die iilgmbh-Org transferiert, muss das Binding auf
+# iilgmbh/iil-enrichment umgezogen werden (Binding ist org/repo-spezifisch, der Workflow nicht).
 
 on:
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
-      dry_run:
-        description: "Dry run (build + twine check, skip upload)"
-        required: false
-        default: "false"
+      target:
+        description: "Upload target"
+        required: true
+        default: "pypi"
         type: choice
         options:
-          - "true"
-          - "false"
+          - pypi
+          - testpypi
 
 jobs:
   test:
@@ -32,33 +36,106 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e ".[dev]"
-      - run: pytest -q
+      - name: Install package + dev deps
+        run: |
+          pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Run tests (wie CI)
+        run: pytest tests/ --tb=short -q
 
-  publish:
-    needs: test
+  build:
+    name: Build distribution
     runs-on: ubuntu-latest
-    # The PyPI trusted publisher is registered with environment "pypi".
-    # Declaring it makes the OIDC token carry that environment claim so it matches.
-    environment: pypi
-    permissions:
-      contents: read
-      id-token: write  # OIDC token for PyPI Trusted Publishing (no API token)
+    needs: test
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
       - name: Install build tools
         run: pip install hatchling twine
-
-      - name: Build
-        run: python -m hatchling build
-
-      - name: Check dist
+      - name: Read version from pyproject.toml
+        id: meta
+        run: |
+          VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building version: $VERSION"
+      - name: Tag must equal pyproject version (K3, ADR-266)
+        if: github.event_name == 'push'
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          if [ "$TAG" != "${{ steps.meta.outputs.version }}" ]; then
+            echo "::error::Tag v$TAG != pyproject version ${{ steps.meta.outputs.version }} — kein Upload"
+            exit 1
+          fi
+      - name: Build wheel + sdist
+        run: |
+          rm -rf dist
+          python -m hatchling build
+          ls -la dist/
+      - name: Check
         run: twine check dist/*
+      # ADR-226 binding gate: scannt exakt die Bytes, die hochgeladen werden.
+      - name: Pre-publish secret gate (built artifact)
+        uses: achimdehnert/platform/.github/actions/gitleaks-scan@main
+        with:
+          mode: sdist
+          source: dist
+          report_escape_hatch: "false"
+          context_label: "pre-publish: iil-enrichment"
+          triage_hint: "A secret is in the artifact about to be published to PyPI (irreversible). ROTATE it and exclude it from the build. NOT suppressible."
+      - name: Upload dist artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ steps.meta.outputs.version }}
+          path: dist/
+          retention-days: 7
 
-      - name: Publish to PyPI (Trusted Publishing / OIDC)
-        if: inputs.dry_run == 'false'
+  publish-pypi:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    if: |
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'pypi')
+    environment:
+      name: pypi
+      url: https://pypi.org/project/iil-enrichment/
+    permissions:
+      id-token: write
+    steps:
+      - name: Download dist artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-${{ needs.build.outputs.version }}
+          path: dist/
+      - name: Publish to PyPI (Trusted Publishing, PEP 740 attestations)
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          print-hash: true
+          skip-existing: true
+
+  publish-testpypi:
+    name: Publish to TestPyPI
+    needs: build
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'testpypi'
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/iil-enrichment/
+    permissions:
+      id-token: write
+    steps:
+      - name: Download dist artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-${{ needs.build.outputs.version }}
+          path: dist/
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          print-hash: true
