@@ -32,8 +32,8 @@ jobs:
     name: Tests (publish gate)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install package + dev deps
@@ -50,8 +50,8 @@ jobs:
     outputs:
       version: ${{ steps.meta.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install build tools
@@ -87,7 +87,7 @@ jobs:
           context_label: "pre-publish: iil-enrichment"
           triage_hint: "A secret is in the artifact about to be published to PyPI (irreversible). ROTATE it and exclude it from the build. NOT suppressible."
       - name: Upload dist artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dist-${{ steps.meta.outputs.version }}
           path: dist/
@@ -107,7 +107,7 @@ jobs:
       id-token: write
     steps:
       - name: Download dist artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: dist-${{ needs.build.outputs.version }}
           path: dist/
@@ -130,7 +130,7 @@ jobs:
       id-token: write
     steps:
       - name: Download dist artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: dist-${{ needs.build.outputs.version }}
           path: dist/
