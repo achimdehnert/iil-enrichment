@@ -79,7 +79,7 @@ jobs:
         run: twine check dist/*
       # ADR-226 binding gate: scannt exakt die Bytes, die hochgeladen werden.
       - name: Pre-publish secret gate (built artifact)
-        uses: achimdehnert/platform/.github/actions/gitleaks-scan@main
+        uses: iilgmbh/shared-ci/.github/actions/gitleaks-scan@main
         with:
           mode: sdist
           source: dist
